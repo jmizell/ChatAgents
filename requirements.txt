@@ -10,3 +10,5 @@ pydantic==2.3.0
 requests==2.31.0
 tiktoken==0.4.0
 wikipedia==1.4.0
+tenacity==8.2.3
+pytz==2023.3.post1

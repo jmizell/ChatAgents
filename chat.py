@@ -1,4 +1,5 @@
 import os
+import json
 import openai
 
 response = openai.ChatCompletion.create(
@@ -20,4 +21,5 @@ response = openai.ChatCompletion.create(
   presence_penalty=0
 )
 
+print(json.dumps(response))
 print(response["choices"][0]["message"]["content"])
