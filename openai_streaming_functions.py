@@ -86,17 +86,19 @@ def call_api(msgs: list[dict], functions: list[dict] = None, stream: bool = True
     retry = 0
     while True:
         try:
-            completion = openai.ChatCompletion.create(
-                model=MODEL_NAME,
-                messages=msgs,
-                functions=functions,
-                stream=stream,
-            )
+            create_params = {
+                'model': MODEL_NAME,
+                'messages': msgs,
+                'stream': stream,
+            }
+            if functions is not None:
+                create_params['functions'] = functions
+            completion = openai.ChatCompletion.create(**create_params)
             return completion
         except Exception as api_err:
             print(f'\n\nError communicating with OpenAI: "{api_err}"')
             if 'maximum context length' in str(api_err):
-                a = messages.pop(0)
+                msgs = msgs.pop(0)
                 print('\n\n DEBUG: Trimming oldest message')
                 continue
             retry += 1
