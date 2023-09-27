@@ -43,7 +43,7 @@ Please proceed with the task."""
     return response["choices"][0]["message"]["content"]
 
 
-def threaded_search(question, sliced_results, results, lock):
+def threaded_filter(question, sliced_results, results, lock):
     for r in sliced_results:
         msgs = [
             {
@@ -67,16 +67,9 @@ If the result is relevant, answer with the answer YES, or NO only.
             print(f"Added {r['href']}")
 
 
-def web_search(question: str, query: str, max_results: int = 100) -> str:
+def combine(all_results: list, question: str, query: str, max_results: int = 250) -> str:
     results = []
     lock = threading.Lock()
-
-    all_results = []
-    with DDGS() as ddgs:
-        for r in ddgs.text(query, safesearch='off'):
-            all_results.append(r)
-            if len(all_results) >= max_results:
-                break
 
     num_threads = 4
     slice_size = len(all_results) // num_threads
@@ -85,7 +78,7 @@ def web_search(question: str, query: str, max_results: int = 100) -> str:
         start_index = i * slice_size
         end_index = start_index + slice_size
         sliced_results = all_results[start_index:end_index]
-        t = threading.Thread(target=threaded_search, args=(
+        t = threading.Thread(target=threaded_filter, args=(
             question, sliced_results, results, lock))
         threads.append(t)
         t.start()
@@ -97,16 +90,49 @@ def web_search(question: str, query: str, max_results: int = 100) -> str:
     combine_input = []
     for r in results:
         combine_input.append(r['body'])
-        if token_count("\n".join(combine_input)) > MODEL_MAX_TOKENS * 0.5:
+        if token_count("\n".join(combine_input)) > 1000:
             print("processing...")
-            response = combine_results(question, response, "\n".join(combine_input))
+            response = combine_results(
+                question, response, "\n".join(combine_input))
             combine_input = []
 
     if combine_input:
         print("processing...")
-        response = combine_results(question, response, "\n".join(combine_input))
+        response = combine_results(
+            question, response, "\n".join(combine_input))
 
     return response
+
+
+def web_search(question: str, query: str, max_results: int = 250) -> str:
+    all_results = []
+    with DDGS() as ddgs:
+        for r in ddgs.text(query, safesearch='off'):
+            all_results.append(r)
+            if len(all_results) >= max_results:
+                break
+
+    return combine(all_results, question, query, max_results)
+
+
+def wikipedia_search(question: str, query: str, max_results: int = 250) -> str:
+    all_results = []
+    for page_title in wikipedia.search(query[:300]):
+        try:
+            wiki_page = wikipedia.page(title=page_title, auto_suggest=False)
+        except (wikipedia.exceptions.PageError, wikipedia.exceptions.DisambiguationError):
+            continue
+
+        all_results.append({
+            "title":page_title,
+            "href": wiki_page.url,
+            "body": wiki_page.summary,
+        })
+        if len(all_results) >= max_results:
+            break
+
+    return combine(all_results, question, query, max_results)
+
 
 def call_api(msgs: list[dict], functions: list[dict] = None, stream: bool = True):
     max_retry = 7
@@ -136,4 +162,8 @@ def call_api(msgs: list[dict], functions: list[dict] = None, stream: bool = True
 
 
 if __name__ == "__main__":
-    print(web_search("Can you tell me something interesting about the denver capital?", "denver capital"))
+    question = "Can you tell me something interesting about the denver capital?"
+    web_result = web_search(question, "denver capital")
+    wikipedia_result = wikipedia_search(question, "denver capital")
+    print("processing....")
+    print(combine_results(question, web_result, wikipedia_result))
