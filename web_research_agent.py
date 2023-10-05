@@ -155,7 +155,7 @@ def combine_results(question: str, results: str, new_results: str) -> str:
 Instructions:
 1. Combine the information from the 'Current Result' and the 'New Result'.
 2. Do not omit any details from either result.
-3. Include links and quotes when relevant.
+3. Include references, quotes and relevant links.
 4. If the 'New Result' does not offer any new information, return the 'Current Result' as is.
 
 Current Result:
@@ -231,7 +231,7 @@ def combine(all_results: list, question: str, query: str) -> str:
     response = ""
     combine_input = []
     for r in results:
-        combine_input.append(r['body'])
+        combine_input.append(f"\n\nTitle: {r['title']}\nURL: {r['href']}\nContent: {r['body']}")
         if token_count("\n".join(combine_input)) > SMART_MODEL_MAX_TOKENS * 0.5:
             print("processing...")
             response = combine_results(question, response, "\n".join(combine_input))
@@ -329,8 +329,12 @@ Please avoid using quotes around the query."""
     web_result = web_search(question, search_query, max_results=50)
     msgs = [
         {
-            "role": "system",
-            "content": f"""Please output a wikipedia search query for this question: {question}. Note: Please provide the query without enclosing it in quotes."""
+    "role": "system",
+    "content": f"""You're tasked with generating a query for Wikipedia, an encyclopedia. Think of topics or subject areas that Wikipedia is likely to have comprehensive articles on. The query should be tailored to retrieve relevant and in-depth information on the topic at hand.
+
+Considering the question: '{question}', what would be the most encyclopedic search query for Wikipedia? 
+
+Please provide the query without enclosing it in quotes."""
         }
     ]
     response = call_api(msgs, stream=False, model_name=SMART_MODEL_NAME)
