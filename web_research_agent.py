@@ -43,6 +43,7 @@ Instructions:
 3. Do not omit any details.
 4. Include quotes and relevant links.
 5. If the 'New Page Segment' does not offer any new information, return the 'Current Response' as is.
+6. Please begin your response with the consolidated information without referencing the instructions.
 
 Current Response:
 {response}
@@ -157,6 +158,7 @@ Instructions:
 2. Do not omit any details from either result.
 3. Include references, quotes and relevant links.
 4. If the 'New Result' does not offer any new information, return the 'Current Result' as is.
+5. Please begin your response with the consolidated information without referencing the instructions.
 
 Current Result:
 {results}
