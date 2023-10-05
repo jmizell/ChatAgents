@@ -12,13 +12,15 @@ from bs4 import BeautifulSoup
 import markdownify
 
 
-MODEL_NAME = "gpt-3.5-turbo-16k-0613"
-MODEL_MAX_TOKENS = 16385
+FAST_MODEL_NAME = "gpt-3.5-turbo-16k-0613"
+FAST_MODEL_MAX_TOKENS = 16385
+SMART_MODEL_NAME = "gpt-4-0613"
+SMART_MODEL_MAX_TOKENS = 8191
 
 
 def token_count(string: str) -> int:
     """Returns the number of tokens in a text string."""
-    encoding = tiktoken.encoding_for_model(MODEL_NAME)
+    encoding = tiktoken.encoding_for_model(FAST_MODEL_NAME)
     return len(encoding.encode(string))
 
 
@@ -27,6 +29,7 @@ def extract_webpage(question: str, url: str, response: str, page_markdown: str) 
     retry = 0
 
     original_response_length = token_count(response)
+    model_name = FAST_MODEL_NAME
 
     while retry < max_retry:
         msgs = [
@@ -51,13 +54,15 @@ Please proceed with the task."""
             }
         ]
 
-        new_response = call_api(msgs, stream=False)["choices"][0]["message"]["content"]
+        new_response = call_api(msgs, stream=False, model_name=model_name)["choices"][0]["message"]["content"]
 
         if token_count(new_response) >= original_response_length * 0.85:
             return new_response
 
         print(f"Retry {retry+1}: New response is shorter than original. Retrying for {url}")
         retry += 1
+        if retry >= max_retry-1:
+            model_name = SMART_MODEL_NAME
 
     print(f"Max retries reached. Returning original response. Failed segment for {url}")
     return response 
@@ -77,7 +82,7 @@ def scrape_and_extract(url: str, question: str) -> str:
     for word in markdown_text.split(" "):
         tentative_segment = f"{segment} {word}"
         tentative_token_count = token_count(tentative_segment)
-        if tentative_token_count <= MODEL_MAX_TOKENS * 0.5:
+        if tentative_token_count <= SMART_MODEL_MAX_TOKENS * 0.5:
             segment = tentative_segment
             segment_token_count = tentative_token_count
         else:
@@ -163,7 +168,7 @@ Please proceed with the task."""
             }
         ]
 
-        new_response = call_api(msgs, stream=False)["choices"][0]["message"]["content"]
+        new_response = call_api(msgs, stream=False, model_name=SMART_MODEL_NAME)["choices"][0]["message"]["content"]
 
         if token_count(new_response) >= original_response_length * 0.85:
             return new_response
@@ -227,10 +232,9 @@ def combine(all_results: list, question: str, query: str) -> str:
     combine_input = []
     for r in results:
         combine_input.append(r['body'])
-        if token_count("\n".join(combine_input)) > MODEL_MAX_TOKENS * 0.5:
+        if token_count("\n".join(combine_input)) > SMART_MODEL_MAX_TOKENS * 0.5:
             print("processing...")
-            response = combine_results(
-                question, response, "\n".join(combine_input))
+            response = combine_results(question, response, "\n".join(combine_input))
             combine_input = []
 
     if combine_input:
@@ -244,19 +248,15 @@ def combine(all_results: list, question: str, query: str) -> str:
 def web_search(question: str, query: str, max_results: int = 250) -> str:
     max_retry = 5
     retry = 0
-    while retry < max_retry:
-        all_results = []
+    all_results = []
+    while retry <= max_retry:
         with DDGS() as ddgs:
-            for r in ddgs.text(query, safesearch='off'):
-                all_results.append(r)
-                if len(all_results) >= max_results:
-                    break
-        if len(all_results) > 0:
-            break
+            all_results = [r for r in ddgs.text(query, region="us-en", safesearch="off", max_results=max_results, backend="lite")]
+            if len(all_results) > 0:
+                break
         retry+=1
 
     print(f"Found {len(all_results)} web results to process")
-
     return combine(all_results, question, query)
 
 
@@ -280,13 +280,13 @@ def wikipedia_search(question: str, query: str, max_results: int = 250) -> str:
     return combine(all_results, question, query)
 
 
-def call_api(msgs: list[dict], functions: list[dict] = None, stream: bool = True):
+def call_api(msgs: list[dict], functions: list[dict] = None, stream: bool = True, model_name: str = FAST_MODEL_NAME):
     max_retry = 7
     retry = 0
     while True:
         try:
             create_params = {
-                'model': MODEL_NAME,
+                'model': model_name,
                 'messages': msgs,
                 'stream': stream,
             }
@@ -308,27 +308,34 @@ def call_api(msgs: list[dict], functions: list[dict] = None, stream: bool = True
 
 
 if __name__ == "__main__":
-    question = "I need a list of dispersed camping sites in Utah"
+    question = "I need a list of dispersed camping sites in Colorado"
     print(f"Question: {question}")
     msgs = [
         {
             "role": "system",
-            "content": f"""Please output a web search query for this question: {question}"""
+            "content": f"""You're an expert web research agent. 
+Your goal is to intuit the core interest behind the user's question and generate a web search query that 
+captures that interest in the most relevant and specific manner. Consider the nuances of the question 
+and provide a tailored query. 
+
+For the question: '{question}', what would be the most appropriate search query? 
+
+Please avoid using quotes around the query."""
         }
     ]
-    response = call_api(msgs, stream=False)
+    response = call_api(msgs, stream=False, model_name=SMART_MODEL_NAME)
     search_query = response["choices"][0]["message"]["content"]
     print(f"Search query: {search_query}")
-    web_result = web_search(question, search_query, max_results=100)
+    web_result = web_search(question, search_query, max_results=50)
     msgs = [
         {
             "role": "system",
-            "content": f"""Please output a wikipedia search query for this question: {question}"""
+            "content": f"""Please output a wikipedia search query for this question: {question}. Note: Please provide the query without enclosing it in quotes."""
         }
     ]
-    response = call_api(msgs, stream=False)
+    response = call_api(msgs, stream=False, model_name=SMART_MODEL_NAME)
     search_query = response["choices"][0]["message"]["content"]
     print(f"Search query: {search_query}")
-    wikipedia_result = wikipedia_search(question, search_query, max_results=100)
+    wikipedia_result = wikipedia_search(question, search_query, max_results=50)
     print("processing....")
     print(combine_results(question, web_result, wikipedia_result))
