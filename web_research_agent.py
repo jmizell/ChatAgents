@@ -4,6 +4,7 @@ import time
 import re
 import threading
 import argparse
+import json
 from datetime import datetime
 from time import sleep
 import pytz
@@ -190,7 +191,7 @@ def scrape_content_from_url(url: str) -> (str, str):
             return markdown_text, "Success"
         else:
             print(
-                f"Failed to fetch the webpage. Status Code: {response.status_code}")
+                f"Failed to fetch the webpage {url}. Status Code: {response.status_code}")
             return "", f"Failed. Status Code: {response.status_code}"
     except requests.exceptions.RequestException as err:
         print(f"An error occurred: {err}")
@@ -245,24 +246,52 @@ Please proceed with the task."""
     return results  # if max retries are reached, return the original result
 
 
+def get_score(response: str) -> int:
+    first_line = response.split('\n')[0]
+    match = re.search(r'\b\d+\b', first_line)
+    if match:
+        return int(match.group())
+    raise ValueError("No integer value found in the response.")
+
+
 def filter_results_in_threads(question, sliced_results, results, lock):
     """Evaluate search results in parallel threads based on their relevance."""
     for r in sliced_results:
         msgs = [
             {
                 "role": "system",
-                "content": f"""Please evaluate the following search result based on its relevance to the question: '{question}'.
+                "content": f"""Task Description:
 
-Title: {r['title']}
-URL: {r['href']}
-Content: {r['body']}
+You are a Search Result Relevancy Evaluator. Given a set of text inputs that represent the title, URL, and content of 
+a search result, you operate as a function that must compute and output an integer score that quantifies the search 
+result's relevance to a specific user query.
 
-Answer with an INTEGER score of the relevencey from 0 through 4. Reply only with 0, 1, 2, 3, or 4.
-        """
+Task Requirements:
+- Evaluate the given search result in the context of its relevance to a predetermined user query.
+- Output the evaluation as an INTEGER value that falls within the inclusive range of 0 to 4.
+- STRICTLY output ONLY one of the following integer values: 0, 1, 2, 3, or 4.
+- Outputting any value other than the specified integers will trigger a runtime exception and consequently crash the program.
+
+Evaluation Task:
+
+Given the search result as follows, please assess its relevance to the query '{question}'.
+
+  Title: {r['title']}
+  URL: {r['href']}
+  Content: {r['body']}
+
+Response Instructions:
+
+Return an INTEGER score representing the search result's relevance to the query. The score must strictly be one of the 
+following: 0, 1, 2, 3, or 4. Any other type of response will result in a runtime exception and will terminate the program.
+
+Response:
+Score: """
             }
         ]
+
         response = interact_with_openai_api(msgs, stream=False)
-        score = int(response["choices"][0]["message"]["content"])
+        score = get_score(response["choices"][0]["message"]["content"])
         print(f"Score: {score}, URL: {r['href']}")
         if score == 4:
             extracted_info = extract_from_url(r['href'], question)
@@ -373,6 +402,9 @@ def interact_with_openai_api(msgs: list[dict], functions: list[dict] = None, str
                     "X-Title": "localhost",
                 },
                 **create_params)
+            if not stream and bool(os.getenv("DEBUG", "")):
+                print(json.dumps(msgs, indent=2, sort_keys=True))
+                print(json.dumps(completion, indent=2, sort_keys=True))
             return completion
         except Exception as api_err:
             print(f'\n\nError communicating with OpenAI: "{api_err}"')
@@ -405,6 +437,9 @@ def _start():
     parser.add_argument("--wiki", type=int,
                         help="Number of Wikipedia search results", default=0)
     args = parser.parse_args()
+
+    print(f"Fast model {FAST_MODEL_NAME}:{FAST_MODEL_MAX_TOKENS}")
+    print(f"Smart model {SMART_MODEL_NAME}:{SMART_MODEL_MAX_TOKENS}")
 
     while True:
         question = input("Enter your question: ")
@@ -466,7 +501,7 @@ Please provide the query without enclosing it in quotes."""
         }
     ]
     response = interact_with_openai_api(
-        msgs, stream=False, model_name=FAST_MODEL_NAME)
+        msgs, stream=False, model_name=SMART_MODEL_NAME)
     file_name = response["choices"][0]["message"]["content"]
     save_to_file(f"research_result_{int(time.time())}_{file_name}", result)
 
